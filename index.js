@@ -37,6 +37,12 @@ const SPASitemapGenerator = (() => {
         }
     };
 
+    /**
+     * Starts a browser and opens a page
+     * @param {Object} browserConfig - config for the puppeteer launch function.
+     * See doc https://pptr.dev/#?product=Puppeteer&version=v5.2.1&show=api-puppeteerlaunchoptions
+     * @return {void}
+     */
     async function startBrowser(browserConfig) {
         console.info('✔️ Starting the browser');
 
@@ -49,6 +55,13 @@ const SPASitemapGenerator = (() => {
             console.info('✔️ the browser has been opened');
             page = await browser.newPage();
             console.info('✔️ the page has been opened');
+            process.on('exit', (code) => {
+                console.log('CODE', code);
+                if (code === 130) {
+                    console.warn('Critical file writing');
+                    writeFile('critical.json');
+                }
+            });
         } catch (err) {
             console.error('❌ Failed to start the browser', err);
             process.exit();
@@ -56,6 +69,10 @@ const SPASitemapGenerator = (() => {
         return;
     }
 
+    /**
+     * Collect links from the page and return the list
+     * @return {Promise} the list of links collected from the page
+     */
     async function collectLinksFromPage() {
         let links = [];
 
@@ -83,20 +100,35 @@ const SPASitemapGenerator = (() => {
         });
     }
 
-    function writeFile (fileName) {
-        console.log('writing a file');
+    /**
+     * @param {String} file - file name
+     * @return {void}
+     */
+    function writeFile(file) {
+        console.info('✔️ writing a file');
         let data = [];
+
+        /**
+         * Collect key values from the frontier, i.e. links
+         */
         for (let link in frontier) {
             if (frontier.hasOwnProperty(link)) {
                 data.push(link);
             }
         }
-        fs.writeFile(fileName, JSON.stringify(data), (err, data) => {
+        console.log('data', data);
+        fs.writeFile(file, JSON.stringify(data), (err, data) => {
+            console.info('START');
             if (err) throw new Error(err);
+            console.info('✔️ File has been successfully written');
             process.exit();
         });
     }
 
+    /**
+     * @param {String} url - URL where to start to crawl
+     * @return {this}
+     */
     async function crawl(url) {
         if (!browser) {
             console.error('❌ The generator has not been kicked in');
@@ -104,66 +136,61 @@ const SPASitemapGenerator = (() => {
         }
 
         console.info('✔️ Crawl has been started');
-        frontier[url] = 0;
-        queue.push(url);
+        addLink(url);
 
         while (queue.length) {
-            console.log('✔️ Loop has started');
+            let link = queue.shift();
             try {
-                await processPage();
+                await processPage(link);
             } catch (err) {
                 console.error('❌ Error occured during crawl process', err);
-                console.log('✔️ Forced writing on the disk has been initiated');
                 writeFile('preserved-data.json');
-                process.exit();
             }
-            console.log(`Links have been processed: ${++counter}`);
-            break;
+            console.info(`${++counter} links have been processed`);
+            // break;
         }
-        console.log('Loop has ended');
-        return;
+        console.info('✔️ Loop has ended');
+        return this;
     }
 
-    async function processPage() {
-        console.log('Page processing has started');
-        let link = queue.shift();
+    async function processPage(link) {
+        console.info(`✔️ Page processing has started at URL ${link}`);
 
         if (frontier.hasOwnProperty(link) && !frontier[link]) {
 
             try {
-                console.log('Page transition started');
                 await page.goto(link, {
                     waitUntil: 'domcontentloaded',
                 });
             } catch (err) {
-                console.log('Error during page transition', err);
+                console.error('❌ Error during page transition', err);
                 process.exit();
             }
 
-            console.log('Start: waitForSelector');
             await page.waitForSelector('a');
-            console.log('End: waitForSelector');
 
             const unfilteredLinks = await collectLinksFromPage();
 
             const filteredLinks = [];
 
             unfilteredLinks.forEach((link) => {
-                // if (link.match(new RegExp('^https\:\/\/alligator\.io\/.*'))) {
-                    filteredLinks.push(link);
-                // }
+                filteredLinks.push(link);
             });
 
             filteredLinks.forEach((link) => {
                 console.log('link', link);
                 if (!frontier.hasOwnProperty(link)) {
-                    frontier[link] = 0;
-                    queue.push(link);
+                    addLink(link);
                 }
             });
 
             frontier[link] = 1;
         }
+    }
+
+    function addLink(url) {
+        frontier[url] = 0;
+        queue.push(url);
     }
 
 
@@ -178,5 +205,6 @@ const SPASitemapGenerator = (() => {
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
     // await generator.stop();
-    await generator.crawl('http://localhost:3000');
+    await generator.crawl('http://localhost:3000/');
+    await generator.writeFile('test.json');
 })();
